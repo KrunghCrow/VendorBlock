@@ -7,12 +7,13 @@ using Oxide.Core;
 #region Changelogs and ToDo
 /**********************************************************************
 * 1.0.0 :   Release
+* 1.0.1 :   Simplified permcheck
 **********************************************************************/
 #endregion
 
 namespace Oxide.Plugins
 {
-    [Info("Vendor Block", "Krungh Crow", "1.0.0")]
+    [Info("Vendor Block", "Krungh Crow", "1.0.1")]
     [Description("Disables interaction with the airwolf/boat/stables vendor npc")]
     class VendorBlock : RustPlugin
     {
@@ -46,23 +47,27 @@ namespace Oxide.Plugins
 
         bool? OnNpcConversationStart(VehicleVendor vendor, BasePlayer player, ConversationData conversationData)
         {
-            if (conversationData.shortname == "airwolf_heli_vendor" && !permission.UserHasPermission(player.UserIDString, Heli_Perm))
+            if (conversationData.shortname == "airwolf_heli_vendor" && !HasPerm(player, Heli_Perm))
             {
                 player.ChatMessage(lang.GetMessage("VendorReplyAirwolf", this, player.UserIDString));
                 return false;
             }
-            if (conversationData.shortname == "boatvendor" && !permission.UserHasPermission(player.UserIDString, Boat_Perm))
+            if (conversationData.shortname == "boatvendor" && !HasPerm(player, Boat_Perm))
             {
                 player.ChatMessage(lang.GetMessage("VendorReplyBoat", this, player.UserIDString));
                 return false;
             }
-            if (conversationData.shortname == "stablesvendor" && !permission.UserHasPermission(player.UserIDString, Horse_Perm))
+            if (conversationData.shortname == "stablesvendor" && !HasPerm(player, Horse_Perm))
             {
                 player.ChatMessage(lang.GetMessage("VendorReplyStables", this, player.UserIDString));
                 return false;
             }
             return null;
         }
+        #endregion
+
+        #region Helpers
+        bool HasPerm(BasePlayer player , string perm) { return HasPerm(player , perm); }
         #endregion
     }
 }
