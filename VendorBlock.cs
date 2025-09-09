@@ -1,73 +1,159 @@
 using System;
-using System.Linq;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using Oxide.Core;
 
-#region Changelogs and ToDo
-/**********************************************************************
-* 1.0.0 :   Release
-* 1.0.1 :   Simplified permcheck
-**********************************************************************/
-#endregion
-
 namespace Oxide.Plugins
 {
-    [Info("Vendor Block", "Krungh Crow", "1.0.1")]
-    [Description("Disables interaction with the airwolf/boat/stables vendor npc")]
+    [Info("Vendor Block" , "Krungh Crow" , "2.0.1")]
+    [Description("Disables interaction with NPC vendors and mission npc's with config and permissions")]
     class VendorBlock : RustPlugin
     {
-        #region Variables
-        const string Heli_Perm = "vendorblock.heli";
-        const string Boat_Perm = "vendorblock.boat";
-        const string Horse_Perm = "vendorblock.horse";
+        private Dictionary<string , VendorSettings> vendorSettings = new Dictionary<string , VendorSettings>();
+
+        private readonly Dictionary<string , string> defaultVendors = new Dictionary<string , string>
+        {
+            //Vehicles
+            { "bandit_conversationalist", "vendorblock.heli" },//updated
+            { "boat_shopkeeper", "vendorblock.boat" },//updated
+            { "stables_shopkeeper", "vendorblock.horse" },//updated
+            //Missions
+            { "missionprovider_fishing_b", "vendorblock.divemaster"},//updated
+            { "missionprovider_fishing_a", "vendorblock.fisherman"},//updated
+            { "missionprovider_bandit_a", "vendorblock.lumberjack"},//updated
+            { "missionprovider_bandit_b", "vendorblock.miner"},//updated
+            { "missionprovider_stables_a", "vendorblock.stablehand"},//updated
+            { "missionprovider_stables_b", "vendorblock.hunter"},//updated
+            { "missionprovider_outpost_a", "vendorblock.scientist"},//updated
+            { "missionprovider_outpost_b", "vendorblock.vagebond"}//updated
+        };
+
+        private class VendorSettings
+        {
+            [JsonProperty("Enabled")]
+            public bool Enabled { get; set; }
+
+            [JsonProperty("Permission")]
+            public string Permission { get; set; }
+        }
+
+        #region Config
+
+        protected override void LoadDefaultConfig()
+        {
+            Config.Clear();
+            vendorSettings.Clear();
+
+            foreach (var entry in defaultVendors)
+            {
+                vendorSettings[entry.Key] = new VendorSettings
+                {
+                    Enabled = true ,
+                    Permission = entry.Value
+                };
+            }
+
+            Config.WriteObject(vendorSettings , true);
+            SaveConfig();
+        }
+
+        protected override void LoadConfig()
+        {
+            try
+            {
+                base.LoadConfig();
+                vendorSettings = Config.ReadObject<Dictionary<string , VendorSettings>>();
+
+                if (vendorSettings == null)
+                {
+                    PrintWarning("Config was empty or invalid, regenerating default config...");
+                    LoadDefaultConfig();
+                    return;
+                }
+
+                bool updated = false;
+
+                foreach (var entry in defaultVendors)
+                {
+                    if (!vendorSettings.ContainsKey(entry.Key))
+                    {
+                        vendorSettings[entry.Key] = new VendorSettings
+                        {
+                            Enabled = true ,
+                            Permission = entry.Value
+                        };
+                        updated = true;
+                    }
+                }
+
+                if (updated)
+                {
+                    PrintWarning("Missing vendors added to config.");
+                    Config.WriteObject(vendorSettings , true);
+                    SaveConfig();
+                }
+            }
+            catch (Exception ex)
+            {
+                PrintError($"Config error: {ex.Message}, regenerating...");
+                LoadDefaultConfig();
+            }
+        }
 
         #endregion
 
-        #region LanguageAPI
+        #region Language
+
         protected override void LoadDefaultMessages()
         {
-            lang.RegisterMessages(new Dictionary<string, string>
+            var messages = new Dictionary<string , string>();
+            foreach (var vendor in defaultVendors.Keys)
             {
-                ["VendorReplyAirwolf"] = "Using the Airwolf Vendor is disabled on this server!",
-                ["VendorReplyBoat"] = "Using the Boat Vendor is disabled on this server!",
-                ["VendorReplyStables"] = "Using the Horse Vendor is disabled on this server!",
-            }, this);
+                messages[$"VendorReply.{vendor}"] = $"Using the {vendor.Replace("_" , " ")} vendor is disabled on this server!";
+            }
+            lang.RegisterMessages(messages , this);
         }
+
         #endregion
 
-        #region Oxide hooks
+        #region Hooks
 
         void Init()
         {
-            permission.RegisterPermission(Heli_Perm, this);
-            permission.RegisterPermission(Boat_Perm, this);
-            permission.RegisterPermission(Horse_Perm, this);
+            foreach (var vendor in vendorSettings.Values)
+                permission.RegisterPermission(vendor.Permission , this);
+
+            PrintWarning("VendorBlock initialized and permissions registered.");
         }
 
-        bool? OnNpcConversationStart(VehicleVendor vendor, BasePlayer player, ConversationData conversationData)
+        object OnNpcConversationStart(object npcObj , BasePlayer player , ConversationData data)
         {
-            if (conversationData.shortname == "airwolf_heli_vendor" && !HasPerm(player, Heli_Perm))
+            if (player == null || npcObj == null || data == null)
+                return null;
+
+            var entity = npcObj as BaseEntity;
+            if (entity == null)
+                return null;
+
+            string key = entity.ShortPrefabName;
+            Puts(key);
+            if (vendorSettings.TryGetValue(key , out var setting))
             {
-                player.ChatMessage(lang.GetMessage("VendorReplyAirwolf", this, player.UserIDString));
-                return false;
-            }
-            if (conversationData.shortname == "boatvendor" && !HasPerm(player, Boat_Perm))
-            {
-                player.ChatMessage(lang.GetMessage("VendorReplyBoat", this, player.UserIDString));
-                return false;
-            }
-            if (conversationData.shortname == "stablesvendor" && !HasPerm(player, Horse_Perm))
-            {
-                player.ChatMessage(lang.GetMessage("VendorReplyStables", this, player.UserIDString));
-                return false;
+                bool hasPerm = permission.UserHasPermission(player.UserIDString , setting.Permission);
+                if (!setting.Enabled && !hasPerm)
+                {
+                    player.ChatMessage(lang.GetMessage($"VendorReply.{key}" , this , player.UserIDString));
+                    var method = npcObj.GetType().GetMethod("EndConversation");
+                    method?.Invoke(npcObj , new object[] { player });
+                    Puts($"Blocked {player.displayName} from NPC '{key}' via conversation hook.");
+
+                    return false;
+                }
             }
             return null;
         }
-        #endregion
 
-        #region Helpers
-        bool HasPerm(BasePlayer player , string perm) { return HasPerm(player , perm); }
         #endregion
     }
 }
